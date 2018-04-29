@@ -2,7 +2,7 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
   use Pleroma.Web, :controller
   alias Pleroma.{Repo, Activity, User, Notification, Stats}
   alias Pleroma.Web
-  alias Pleroma.Web.MastodonAPI.{StatusView, AccountView, MastodonView}
+  alias Pleroma.Web.MastodonAPI.{StatusView, AccountView, MastodonView, ListView}
   alias Pleroma.Web.ActivityPub.ActivityPub
   alias Pleroma.Web.{CommonAPI, OStatus}
   alias Pleroma.Web.OAuth.{Authorization, Token, App}
@@ -563,6 +563,63 @@ defmodule Pleroma.Web.MastodonAPI.MastodonAPIController do
 
     conn
     |> render(StatusView, "index.json", %{activities: activities, for: user, as: :activity})
+  end
+
+  def get_lists(%{assigns: %{user: user}} = conn, _) do
+    lists = Pleroma.List.for_user(user)
+    res = ListView.render("lists.json", lists: lists)
+    json(conn, res)
+  end
+
+  def get_list(%{assigns: %{user: user}} = conn, %{"id" => id}) do
+    with %Pleroma.List{} = list <- Pleroma.List.get(user, id) do
+      res = ListView.render("list.json", list: list)
+      json(conn, res)
+    else
+      _e -> json(conn, "error")
+    end
+  end
+
+  def delete_list(%{assigns: %{user: user}} = conn, %{"id" => id}) do
+    with %Pleroma.List{} = list <- Pleroma.List.get(user, id),
+         {:ok, _list} <- Pleroma.List.delete(list) do
+      json(conn, %{})
+    else
+      _e ->
+        json(conn, "error")
+    end
+  end
+
+  def rename_list(%{assigns: %{user: user}} = conn, %{"id" => id, "title" => title}) do
+    with %Pleroma.List{} = list <- Pleroma.List.get(user, id),
+         {:ok, _list} <- Pleroma.List.rename(list, title) do
+      res = ListView.render("list.json", list: list)
+      json(conn, res)
+    else
+      _e ->
+        json(conn, "error")
+    end
+  end
+
+  def list_timeline(%{assigns: %{user: user}} = conn, %{"list_id" => id} = params) do
+    with {:ok, %Pleroma.List{following: following}} <- Pleroma.List.get(user, id) do
+      params =
+        params
+        |> Map.put("type", "Create")
+        |> Map.put("blocking_user", user)
+
+      activities =
+        ActivityPub.fetch_activities(following, params)
+        |> Enum.reverse()
+
+      conn
+      |> render(StatusView, "index.json", %{activities: activities, for: user, as: :activity})
+    else
+      _e ->
+        conn
+        |> put_status(403)
+        |> json(%{error: "Error."})
+    end
   end
 
   def index(%{assigns: %{user: user}} = conn, _params) do
